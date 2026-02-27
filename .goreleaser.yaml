@@ -1,0 +1,73 @@
+version: 2
+
+project_name: piper
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - main: .
+    binary: flow
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X piper/cmd.Version={{.Version}}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - README.md
+      - LICENSE
+      - flows/**/*
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "Merge pull request"
+
+release:
+  github:
+    owner: herki
+    name: piper
+  draft: false
+  prerelease: auto
+  name_template: "{{.Tag}}"
+  header: |
+    ## Flow v{{.Version}}
+
+    CLI workflow engine for AI agents.
+
+    ### Installation
+
+    ```bash
+    # Linux (amd64)
+    curl -Lo flow https://github.com/herki/piper/releases/download/{{.Tag}}/piper_{{.Version}}_linux_amd64.tar.gz
+    tar xzf piper_{{.Version}}_linux_amd64.tar.gz
+    chmod +x flow && sudo mv flow /usr/local/bin/
+
+    # macOS (Apple Silicon)
+    curl -Lo flow https://github.com/herki/piper/releases/download/{{.Tag}}/piper_{{.Version}}_darwin_arm64.tar.gz
+    tar xzf piper_{{.Version}}_darwin_arm64.tar.gz
+    chmod +x flow && mv flow /usr/local/bin/
+    ```
