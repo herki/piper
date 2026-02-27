@@ -1,5 +1,9 @@
 # Piper
 
+[![CI](https://github.com/herki/piper/actions/workflows/ci.yml/badge.svg)](https://github.com/herki/piper/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A CLI-first workflow engine where AI agents (or humans) define multi-step automation flows in YAML. A single command or webhook triggers a chain of actions across services without the caller needing to know each service's API.
 
 ```
