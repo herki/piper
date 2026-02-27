@@ -1,0 +1,69 @@
+name: git-deploy
+version: "1.0"
+description: "Pull latest code from git, build, and restart a service"
+
+input:
+  properties:
+    repo_dir:
+      type: string
+      description: "Absolute path to the git repository"
+      required: true
+    branch:
+      type: string
+      description: "Branch to deploy (default: main)"
+      required: false
+    build_cmd:
+      type: string
+      description: "Build command to run (e.g. 'go build -o app .' or 'npm run build')"
+      required: true
+    service_name:
+      type: string
+      description: "Systemd service name to restart"
+      required: false
+
+trigger:
+  type: webhook
+  path: /deploy
+
+steps:
+  - name: pre-deploy-check
+    connector: shell
+    action: run
+    input:
+      command: "cd ${{ input.repo_dir }} && git status --porcelain"
+    on_error: abort
+
+  - name: git-pull
+    connector: shell
+    action: run
+    input:
+      command: "cd ${{ input.repo_dir }} && git fetch origin && git checkout ${{ input.branch }} && git pull origin ${{ input.branch }}"
+    on_error: abort
+
+  - name: log-commit
+    connector: shell
+    action: run
+    input:
+      command: "cd ${{ input.repo_dir }} && git log -1 --format='%h %s (%an, %ar)'"
+    on_error: continue
+
+  - name: build
+    connector: shell
+    action: run
+    input:
+      command: "cd ${{ input.repo_dir }} && ${{ input.build_cmd }}"
+    on_error: abort
+
+  - name: restart-service
+    connector: shell
+    action: run
+    input:
+      command: "if [ -n '${{ input.service_name }}' ]; then sudo systemctl restart ${{ input.service_name }} && echo 'restarted'; else echo 'no service to restart'; fi"
+    on_error: continue
+
+  - name: log-deploy
+    connector: log
+    action: print
+    input:
+      message: "Deployed ${{ input.repo_dir }} (${{ input.branch }}): ${{ steps.log-commit.output.stdout }} | Build: ${{ steps.build.output.status }} | Service: ${{ steps.restart-service.output.stdout }}"
+    on_error: skip

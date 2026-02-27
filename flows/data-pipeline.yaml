@@ -1,0 +1,67 @@
+name: data-pipeline
+version: "1.0"
+description: "Fetch JSON from an API, transform with jq, and POST to a destination"
+
+input:
+  properties:
+    source_url:
+      type: string
+      description: "Source API URL to fetch data from"
+      required: true
+    jq_filter:
+      type: string
+      description: "jq filter to transform the data (e.g. '.results[] | {id, name}')"
+      required: true
+    dest_url:
+      type: string
+      description: "Destination URL to POST transformed data to"
+      required: true
+    auth_header:
+      type: string
+      description: "Optional Authorization header for destination (e.g. 'Bearer xxx')"
+      required: false
+
+trigger:
+  type: webhook
+  path: /data-pipeline
+
+steps:
+  - name: fetch-source
+    connector: http
+    action: request
+    input:
+      url: "${{ input.source_url }}"
+      method: GET
+    on_error: abort
+
+  - name: save-raw
+    connector: shell
+    action: run
+    input:
+      command: "echo '${{ steps.fetch-source.output.body }}' > /tmp/piper-pipeline-raw.json && wc -c < /tmp/piper-pipeline-raw.json"
+    on_error: continue
+
+  - name: transform
+    connector: shell
+    action: run
+    input:
+      command: "echo '${{ steps.fetch-source.output.body }}' | jq -c '${{ input.jq_filter }}'"
+    on_error: abort
+
+  - name: send-to-dest
+    connector: http
+    action: request
+    input:
+      url: "${{ input.dest_url }}"
+      method: POST
+      headers:
+        Authorization: "${{ input.auth_header }}"
+      body: "${{ steps.transform.output.stdout }}"
+    on_error: abort
+
+  - name: log-result
+    connector: log
+    action: print
+    input:
+      message: "Pipeline complete: ${{ input.source_url }} -> transform -> ${{ input.dest_url }} (dest status: ${{ steps.send-to-dest.output.status_code }})"
+    on_error: skip

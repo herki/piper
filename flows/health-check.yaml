@@ -1,0 +1,58 @@
+name: health-check
+version: "1.0"
+description: "Check health of multiple services and report status"
+
+input:
+  properties:
+    target:
+      type: string
+      description: "Base URL to health-check (e.g. https://api.example.com)"
+      required: true
+    slack_webhook:
+      type: string
+      description: "Slack incoming webhook URL for notifications"
+      required: false
+
+trigger:
+  type: webhook
+  path: /health-check
+
+steps:
+  - name: check-endpoint
+    connector: http
+    action: request
+    input:
+      url: "${{ input.target }}"
+      method: GET
+    on_error: continue
+
+  - name: get-response-time
+    connector: shell
+    action: run
+    input:
+      command: "curl -o /dev/null -s -w '%{time_total}' ${{ input.target }}"
+    on_error: continue
+
+  - name: get-dns-info
+    connector: shell
+    action: run
+    input:
+      command: "dig +short $(echo '${{ input.target }}' | sed 's|https\\?://||' | cut -d/ -f1) 2>/dev/null || echo 'dig not available'"
+    on_error: continue
+
+  - name: log-report
+    connector: log
+    action: print
+    input:
+      message: "Health check for ${{ input.target }}: HTTP ${{ steps.check-endpoint.output.status_code }}, response time: ${{ steps.get-response-time.output.stdout }}s, IPs: ${{ steps.get-dns-info.output.stdout }}"
+    on_error: skip
+
+  - name: notify-slack
+    connector: http
+    action: request
+    input:
+      url: "${{ input.slack_webhook }}"
+      method: POST
+      body:
+        text: "Health check for ${{ input.target }}: HTTP ${{ steps.check-endpoint.output.status_code }}, response time: ${{ steps.get-response-time.output.stdout }}s"
+    on_error: skip

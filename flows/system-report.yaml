@@ -1,0 +1,76 @@
+name: system-report
+version: "1.0"
+description: "Collect system metrics (disk, memory, CPU, uptime) and post to a webhook"
+
+input:
+  properties:
+    callback_url:
+      type: string
+      description: "URL to POST the report to (optional, will just log if empty)"
+      required: false
+    hostname:
+      type: string
+      description: "Label for this host"
+      required: false
+
+trigger:
+  type: webhook
+  path: /system-report
+
+steps:
+  - name: disk-usage
+    connector: shell
+    action: run
+    input:
+      command: "df -h / | awk 'NR==2 {print $5}'"
+    on_error: continue
+
+  - name: memory-usage
+    connector: shell
+    action: run
+    input:
+      command: "free -m | awk 'NR==2 {printf \"%dMB/%dMB (%.1f%%)\", $3, $2, $3*100/$2}'"
+    on_error: continue
+
+  - name: cpu-load
+    connector: shell
+    action: run
+    input:
+      command: "cat /proc/loadavg | awk '{print $1, $2, $3}'"
+    on_error: continue
+
+  - name: uptime
+    connector: shell
+    action: run
+    input:
+      command: "uptime -p 2>/dev/null || uptime"
+    on_error: continue
+
+  - name: top-processes
+    connector: shell
+    action: run
+    input:
+      command: "ps aux --sort=-%mem | head -6 | awk 'NR>1 {printf \"%s (%.1f%% mem, %.1f%% cpu)\\n\", $11, $4, $3}'"
+    on_error: continue
+
+  - name: log-report
+    connector: log
+    action: print
+    input:
+      message: "System Report [${{ input.hostname }}] | Disk: ${{ steps.disk-usage.output.stdout }} | Memory: ${{ steps.memory-usage.output.stdout }} | Load: ${{ steps.cpu-load.output.stdout }} | ${{ steps.uptime.output.stdout }}"
+    on_error: skip
+
+  - name: send-report
+    connector: http
+    action: request
+    input:
+      url: "${{ input.callback_url }}"
+      method: POST
+      body:
+        hostname: "${{ input.hostname }}"
+        disk_usage: "${{ steps.disk-usage.output.stdout }}"
+        memory_usage: "${{ steps.memory-usage.output.stdout }}"
+        cpu_load: "${{ steps.cpu-load.output.stdout }}"
+        uptime: "${{ steps.uptime.output.stdout }}"
+        top_processes: "${{ steps.top-processes.output.stdout }}"
+    on_error: skip

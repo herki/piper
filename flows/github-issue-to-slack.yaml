@@ -1,0 +1,87 @@
+name: github-issue-to-slack
+version: "1.0"
+description: "Fetch a GitHub issue and post a formatted summary to Slack"
+
+input:
+  properties:
+    owner:
+      type: string
+      description: "GitHub repo owner"
+      required: true
+    repo:
+      type: string
+      description: "GitHub repo name"
+      required: true
+    issue_number:
+      type: string
+      description: "Issue number"
+      required: true
+    slack_webhook:
+      type: string
+      description: "Slack incoming webhook URL"
+      required: true
+
+trigger:
+  type: webhook
+  path: /github-issue-to-slack
+
+steps:
+  - name: fetch-issue
+    connector: http
+    action: request
+    input:
+      url: "https://api.github.com/repos/${{ input.owner }}/${{ input.repo }}/issues/${{ input.issue_number }}"
+      method: GET
+      headers:
+        Accept: "application/vnd.github.v3+json"
+        User-Agent: "piper-flow"
+    on_error: abort
+
+  - name: fetch-comments
+    connector: http
+    action: request
+    input:
+      url: "https://api.github.com/repos/${{ input.owner }}/${{ input.repo }}/issues/${{ input.issue_number }}/comments?per_page=5"
+      method: GET
+      headers:
+        Accept: "application/vnd.github.v3+json"
+        User-Agent: "piper-flow"
+    on_error: continue
+
+  - name: format-message
+    connector: shell
+    action: run
+    input:
+      command: |
+        cat <<SLACK
+        {
+          "blocks": [
+            {
+              "type": "header",
+              "text": {"type": "plain_text", "text": "#${{ input.issue_number }}: $(echo '${{ steps.fetch-issue.output.body.title }}' | head -c 100)"}
+            },
+            {
+              "type": "section",
+              "text": {"type": "mrkdwn", "text": "*Repo:* ${{ input.owner }}/${{ input.repo }}\n*State:* ${{ steps.fetch-issue.output.body.state }}\n*Author:* ${{ steps.fetch-issue.output.body.user.login }}\n*Link:* ${{ steps.fetch-issue.output.body.html_url }}"}
+            }
+          ]
+        }
+        SLACK
+    on_error: abort
+
+  - name: post-to-slack
+    connector: http
+    action: request
+    input:
+      url: "${{ input.slack_webhook }}"
+      method: POST
+      body:
+        text: "[#${{ input.issue_number }}] ${{ steps.fetch-issue.output.body.title }} (${{ steps.fetch-issue.output.body.state }}) - ${{ steps.fetch-issue.output.body.html_url }} by ${{ steps.fetch-issue.output.body.user.login }}"
+    on_error: abort
+
+  - name: log-done
+    connector: log
+    action: print
+    input:
+      message: "Posted issue #${{ input.issue_number }} (${{ steps.fetch-issue.output.body.title }}) to Slack"
+    on_error: skip
