@@ -1,0 +1,63 @@
+# Piper
+
+> CLI-first workflow engine for AI agents. Define multi-step automation flows in YAML, execute via CLI or webhook. Go binary, zero runtime dependencies.
+
+Piper lets AI agents orchestrate multi-step workflows without knowing each service's API. An agent sends `flow run onboard-client --input '{"name": "Acme"}'` and Piper chains HTTP calls, shell commands, and notifications — returning structured JSON.
+
+## Quick Reference
+
+- [README](https://github.com/herki/piper/blob/master/README.md): Full documentation, install guide, YAML format, connector reference
+- [Example Flows](https://github.com/herki/piper/tree/master/flows): Working flow definitions for common tasks
+
+## CLI Usage
+
+Run a flow: `flow run <name> --input '{"key": "value"}'`
+Dry run (no execution): `flow run <name> --input '{}' --dry-run`
+List flows: `flow list [--output json]`
+Describe a flow (see schema): `flow describe <name> [--output json]`
+Validate a flow file: `flow validate <file.yaml>`
+Start webhook server: `flow serve --port 8080`
+
+All commands support `--output json` for machine-readable output. Use `flow describe <name> --output json` to discover a flow's input/output schema programmatically.
+
+## YAML Flow Format
+
+Flows are YAML files with: name, input/output schema, trigger config, and sequential steps. Each step specifies a connector, action, and input map. Steps reference previous outputs via `${{ steps.<name>.output.<field> }}`.
+
+Variable expressions: `${{ input.field }}`, `${{ steps.name.output.field }}`, `${{ env.VAR }}`.
+Pipe functions: `slugify`, `upper`, `lower`, `trim`.
+Error policies per step: `abort` (default), `continue`, `skip`.
+
+## Built-in Connectors
+
+**http** — `action: request` — Make HTTP requests (GET/POST/PUT/DELETE). Input: `url`, `method`, `headers`, `body`. Output: `status_code`, `body`, `headers`.
+
+**shell** — `action: run` — Execute shell commands. Input: `command`, `dir`. Output: `stdout`, `stderr`, `exit_code`.
+
+**log** — `action: print` — Print debug messages. Input: `message`. Output: `message`.
+
+## Webhook Server
+
+`flow serve --port 8080` maps YAML trigger paths to HTTP POST endpoints. `GET /health` returns status. `GET /flows` returns all available flows with input schemas for agent discovery.
+
+## Execution Output
+
+Every run returns JSON: `{ flow, status, started_at, completed_at, input, steps: [{ name, connector, action, status, output, duration_ms }] }`. Status is `success`, `failed`, or `partial`.
+
+## Available Example Flows
+
+- [demo.yaml](https://github.com/herki/piper/blob/master/flows/demo.yaml): Fetch a URL and log the result
+- [health-check.yaml](https://github.com/herki/piper/blob/master/flows/health-check.yaml): Probe endpoint, measure response time, notify Slack
+- [system-report.yaml](https://github.com/herki/piper/blob/master/flows/system-report.yaml): Collect system metrics, POST to webhook
+- [git-deploy.yaml](https://github.com/herki/piper/blob/master/flows/git-deploy.yaml): Git pull, build, restart service
+- [github-issue-to-slack.yaml](https://github.com/herki/piper/blob/master/flows/github-issue-to-slack.yaml): Fetch GitHub issue, post to Slack
+- [data-pipeline.yaml](https://github.com/herki/piper/blob/master/flows/data-pipeline.yaml): Fetch JSON, transform with jq, forward to destination
+- [playwright-screenshot.yaml](https://github.com/herki/piper/blob/master/flows/playwright-screenshot.yaml): Take webpage screenshots
+- [playwright-pdf.yaml](https://github.com/herki/piper/blob/master/flows/playwright-pdf.yaml): Generate PDFs from webpages
+- [playwright-link-checker.yaml](https://github.com/herki/piper/blob/master/flows/playwright-link-checker.yaml): Crawl page, check for broken links
+- [playwright-visual-diff.yaml](https://github.com/herki/piper/blob/master/flows/playwright-visual-diff.yaml): Visual regression testing with screenshots
+
+## Optional
+
+- [go.mod](https://github.com/herki/piper/blob/master/go.mod): Go module dependencies
+- [LICENSE](https://github.com/herki/piper/blob/master/LICENSE): MIT License
