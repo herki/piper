@@ -1,0 +1,121 @@
+name: file-convert
+version: "1.0"
+description: "Convert files between formats — CSV to JSON, JSON to CSV, YAML to JSON, Markdown to HTML"
+
+input:
+  properties:
+    input_file:
+      type: string
+      description: "Path to input file"
+      required: true
+    output_file:
+      type: string
+      description: "Path to output file"
+      required: true
+    from_format:
+      type: string
+      description: "Source format: csv, json, yaml, markdown"
+      required: true
+    to_format:
+      type: string
+      description: "Target format: csv, json, yaml, html"
+      required: true
+
+output:
+  properties:
+    output_file:
+      type: string
+    size:
+      type: string
+
+trigger:
+  type: webhook
+  path: /skills/file-convert
+
+steps:
+  - name: validate-input
+    connector: shell
+    action: run
+    input:
+      command: |
+        if [ ! -f '${{ input.input_file }}' ]; then
+          echo "ERROR: file not found: ${{ input.input_file }}"
+          exit 1
+        fi
+        echo "$(wc -c < '${{ input.input_file }}' | tr -d ' ') bytes"
+    on_error: abort
+
+  - name: convert
+    connector: shell
+    action: run
+    input:
+      command: |
+        FROM="${{ input.from_format }}"
+        TO="${{ input.to_format }}"
+        INPUT="${{ input.input_file }}"
+        OUTPUT="${{ input.output_file }}"
+
+        case "${FROM}-to-${TO}" in
+          csv-to-json)
+            python3 -c "
+        import csv, json, sys
+        with open('$INPUT') as f:
+            reader = csv.DictReader(f)
+            print(json.dumps(list(reader), indent=2))
+        " > "$OUTPUT"
+            ;;
+          json-to-csv)
+            python3 -c "
+        import csv, json, sys
+        data = json.load(open('$INPUT'))
+        if not data: sys.exit(0)
+        writer = csv.DictWriter(sys.stdout, fieldnames=data[0].keys())
+        writer.writeheader()
+        writer.writerows(data)
+        " > "$OUTPUT"
+            ;;
+          yaml-to-json)
+            python3 -c "
+        import yaml, json
+        data = yaml.safe_load(open('$INPUT'))
+        print(json.dumps(data, indent=2))
+        " > "$OUTPUT"
+            ;;
+          json-to-yaml)
+            python3 -c "
+        import yaml, json
+        data = json.load(open('$INPUT'))
+        print(yaml.dump(data, default_flow_style=False))
+        " > "$OUTPUT"
+            ;;
+          markdown-to-html)
+            python3 -c "
+        import markdown
+        with open('$INPUT') as f:
+            html = markdown.markdown(f.read(), extensions=['tables', 'fenced_code'])
+            print('<html><body>' + html + '</body></html>')
+        " > "$OUTPUT" 2>/dev/null || \
+            # Fallback: basic conversion without markdown module
+            sed 's/^# \(.*\)/<h1>\1<\/h1>/; s/^## \(.*\)/<h2>\1<\/h2>/; s/^### \(.*\)/<h3>\1<\/h3>/; s/^\* \(.*\)/<li>\1<\/li>/; s/^$/<br>/' "$INPUT" > "$OUTPUT"
+            ;;
+          *)
+            echo "Unsupported conversion: ${FROM} to ${TO}"
+            exit 1
+            ;;
+        esac
+        echo "converted"
+    on_error: abort
+
+  - name: output-info
+    connector: shell
+    action: run
+    input:
+      command: "ls -lh '${{ input.output_file }}' | awk '{print $5}'"
+    on_error: continue
+
+  - name: log-result
+    connector: log
+    action: print
+    input:
+      message: "Converted ${{ input.input_file }} (${{ input.from_format }}) -> ${{ input.output_file }} (${{ input.to_format }}), size: ${{ steps.output-info.output.stdout }}"
+    on_error: skip

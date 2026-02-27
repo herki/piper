@@ -33,34 +33,35 @@ func LoadFlow(path string) (*types.FlowDef, error) {
 	return &flow, nil
 }
 
-// LoadFlows reads all YAML flow files from a directory.
+// LoadFlows reads all YAML flow files from a directory, recursively.
 func LoadFlows(dir string) (map[string]*types.FlowDef, error) {
 	flows := make(map[string]*types.FlowDef)
 
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, fmt.Errorf("reading flows directory %s: %w", dir, err)
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
-		ext := strings.ToLower(filepath.Ext(entry.Name()))
+		if d.IsDir() {
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(d.Name()))
 		if ext != ".yaml" && ext != ".yml" {
-			continue
+			return nil
 		}
 
-		path := filepath.Join(dir, entry.Name())
 		flow, err := LoadFlow(path)
 		if err != nil {
-			return nil, err
+			return err
 		}
 
 		if _, exists := flows[flow.Name]; exists {
-			return nil, fmt.Errorf("duplicate flow name %q in %s", flow.Name, path)
+			return fmt.Errorf("duplicate flow name %q in %s", flow.Name, path)
 		}
 		flows[flow.Name] = flow
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("loading flows from %s: %w", dir, err)
 	}
 
 	return flows, nil

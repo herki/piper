@@ -1,0 +1,98 @@
+name: analyze-repo
+version: "1.0"
+description: "Analyze a GitHub repository — languages, size, recent activity, top contributors"
+
+input:
+  properties:
+    owner:
+      type: string
+      description: "GitHub repo owner"
+      required: true
+    repo:
+      type: string
+      description: "GitHub repo name"
+      required: true
+
+output:
+  properties:
+    description:
+      type: string
+    languages:
+      type: object
+    recent_commits:
+      type: array
+    contributors:
+      type: array
+
+trigger:
+  type: webhook
+  path: /skills/analyze-repo
+
+steps:
+  - name: repo-info
+    connector: http
+    action: request
+    input:
+      url: "https://api.github.com/repos/${{ input.owner }}/${{ input.repo }}"
+      method: GET
+      headers:
+        Accept: "application/vnd.github.v3+json"
+        User-Agent: "piper-flow"
+    on_error: abort
+
+  - name: languages
+    connector: http
+    action: request
+    input:
+      url: "https://api.github.com/repos/${{ input.owner }}/${{ input.repo }}/languages"
+      method: GET
+      headers:
+        Accept: "application/vnd.github.v3+json"
+        User-Agent: "piper-flow"
+    on_error: continue
+
+  - name: recent-commits
+    connector: http
+    action: request
+    input:
+      url: "https://api.github.com/repos/${{ input.owner }}/${{ input.repo }}/commits?per_page=5"
+      method: GET
+      headers:
+        Accept: "application/vnd.github.v3+json"
+        User-Agent: "piper-flow"
+    on_error: continue
+
+  - name: contributors
+    connector: http
+    action: request
+    input:
+      url: "https://api.github.com/repos/${{ input.owner }}/${{ input.repo }}/contributors?per_page=5"
+      method: GET
+      headers:
+        Accept: "application/vnd.github.v3+json"
+        User-Agent: "piper-flow"
+    on_error: continue
+
+  - name: format-report
+    connector: shell
+    action: run
+    input:
+      command: |
+        cat <<REPORT
+        Repository: ${{ input.owner }}/${{ input.repo }}
+        Description: ${{ steps.repo-info.output.body.description }}
+        Stars: ${{ steps.repo-info.output.body.stargazers_count }}
+        Forks: ${{ steps.repo-info.output.body.forks_count }}
+        Open Issues: ${{ steps.repo-info.output.body.open_issues_count }}
+        Default Branch: ${{ steps.repo-info.output.body.default_branch }}
+        Created: ${{ steps.repo-info.output.body.created_at }}
+        Last Push: ${{ steps.repo-info.output.body.pushed_at }}
+        REPORT
+    on_error: continue
+
+  - name: log-result
+    connector: log
+    action: print
+    input:
+      message: "${{ steps.format-report.output.stdout }}"
+    on_error: skip

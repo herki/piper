@@ -1,0 +1,103 @@
+name: git-repo-stats
+version: "1.0"
+description: "Analyze a local git repo — commit frequency, top authors, file types, recent changes"
+
+input:
+  properties:
+    repo_dir:
+      type: string
+      description: "Path to git repository"
+      required: true
+    days:
+      type: string
+      description: "Number of days to analyze (default: 30)"
+      required: false
+
+output:
+  properties:
+    total_commits:
+      type: integer
+    top_authors:
+      type: array
+    file_types:
+      type: object
+    recent_changes:
+      type: array
+
+trigger:
+  type: webhook
+  path: /skills/git-stats
+
+steps:
+  - name: validate-repo
+    connector: shell
+    action: run
+    input:
+      command: "cd '${{ input.repo_dir }}' && git rev-parse --git-dir >/dev/null 2>&1 && echo 'valid' || echo 'not a git repo'"
+    on_error: abort
+
+  - name: commit-stats
+    connector: shell
+    action: run
+    input:
+      command: |
+        DAYS="${{ input.days }}"
+        DAYS="${DAYS:-30}"
+        cd '${{ input.repo_dir }}'
+        TOTAL=$(git rev-list --count --since="${DAYS} days ago" HEAD 2>/dev/null || echo "0")
+        DAILY=$(echo "scale=1; $TOTAL / $DAYS" | bc 2>/dev/null || echo "0")
+        echo "{\"total_commits\":$TOTAL,\"days\":$DAYS,\"commits_per_day\":$DAILY}"
+    on_error: abort
+
+  - name: top-authors
+    connector: shell
+    action: run
+    input:
+      command: |
+        DAYS="${{ input.days }}"
+        DAYS="${DAYS:-30}"
+        cd '${{ input.repo_dir }}'
+        git log --since="${DAYS} days ago" --format='%aN' | \
+          sort | uniq -c | sort -rn | head -5 | \
+          awk '{printf "{\"author\":\"%s\",\"commits\":%d}\n", substr($0, index($0,$2)), $1}' | \
+          jq -s -c '.'
+    on_error: continue
+
+  - name: file-types
+    connector: shell
+    action: run
+    input:
+      command: |
+        cd '${{ input.repo_dir }}'
+        git ls-files | sed 's/.*\.//' | sort | uniq -c | sort -rn | head -10 | \
+          awk '{printf "{\"ext\":\".%s\",\"count\":%d}\n", $2, $1}' | \
+          jq -s -c '.'
+    on_error: continue
+
+  - name: recent-changes
+    connector: shell
+    action: run
+    input:
+      command: |
+        cd '${{ input.repo_dir }}'
+        git log -10 --format='{"hash":"%h","author":"%aN","date":"%ai","subject":"%s"}' | jq -s -c '.'
+    on_error: continue
+
+  - name: repo-size
+    connector: shell
+    action: run
+    input:
+      command: |
+        cd '${{ input.repo_dir }}'
+        FILES=$(git ls-files | wc -l | tr -d ' ')
+        SIZE=$(du -sh .git | awk '{print $1}')
+        BRANCH=$(git branch --show-current)
+        echo "{\"files\":$FILES,\"git_size\":\"$SIZE\",\"branch\":\"$BRANCH\"}"
+    on_error: continue
+
+  - name: log-result
+    connector: log
+    action: print
+    input:
+      message: "Repo stats for ${{ input.repo_dir }}: ${{ steps.commit-stats.output.stdout }} | Size: ${{ steps.repo-size.output.stdout }}"
+    on_error: skip

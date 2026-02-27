@@ -1,0 +1,82 @@
+name: json-transform
+version: "1.0"
+description: "Fetch JSON from a URL and transform it with a jq expression — AI agent data processing tool"
+
+input:
+  properties:
+    url:
+      type: string
+      description: "URL that returns JSON"
+      required: true
+    filter:
+      type: string
+      description: "jq filter expression (e.g. '.items[] | {id, name}')"
+      required: true
+    method:
+      type: string
+      description: "HTTP method (default: GET)"
+      required: false
+    body:
+      type: string
+      description: "Request body as JSON string (for POST/PUT)"
+      required: false
+
+output:
+  properties:
+    result:
+      type: any
+    count:
+      type: integer
+
+trigger:
+  type: webhook
+  path: /skills/json-transform
+
+steps:
+  - name: fetch-data
+    connector: http
+    action: request
+    input:
+      url: "${{ input.url }}"
+      method: "${{ input.method }}"
+    on_error: abort
+
+  - name: save-json
+    connector: shell
+    action: run
+    input:
+      command: |
+        TMPFILE=$(mktemp /tmp/piper-json-XXXXXX.json)
+        cat <<'JSONEOF' > "$TMPFILE"
+        ${{ steps.fetch-data.output.body }}
+        JSONEOF
+        echo "$TMPFILE"
+    on_error: abort
+
+  - name: transform
+    connector: shell
+    action: run
+    input:
+      command: "cat '${{ steps.save-json.output.stdout }}' | jq -c '${{ input.filter }}'"
+    on_error: abort
+
+  - name: count-results
+    connector: shell
+    action: run
+    input:
+      command: "echo '${{ steps.transform.output.stdout }}' | jq -s 'length'"
+    on_error: continue
+
+  - name: cleanup
+    connector: shell
+    action: run
+    input:
+      command: "rm -f '${{ steps.save-json.output.stdout }}'"
+    on_error: skip
+
+  - name: log-result
+    connector: log
+    action: print
+    input:
+      message: "Transformed ${{ input.url }} with filter '${{ input.filter }}': ${{ steps.count-results.output.stdout }} result(s)"
+    on_error: skip

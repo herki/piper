@@ -1,0 +1,120 @@
+name: monitor-endpoint
+version: "1.0"
+description: "Monitor an API endpoint — check status, response time, SSL cert expiry, and alert on failure"
+
+input:
+  properties:
+    url:
+      type: string
+      description: "URL to monitor"
+      required: true
+    expected_status:
+      type: string
+      description: "Expected HTTP status code (default: 200)"
+      required: false
+    max_response_time:
+      type: string
+      description: "Max acceptable response time in seconds (default: 5)"
+      required: false
+    alert_url:
+      type: string
+      description: "Webhook URL to POST alerts to (optional)"
+      required: false
+
+output:
+  properties:
+    status_code:
+      type: integer
+    response_time:
+      type: string
+    ssl_expiry_days:
+      type: integer
+    healthy:
+      type: boolean
+
+trigger:
+  type: webhook
+  path: /skills/monitor
+
+steps:
+  - name: check-endpoint
+    connector: shell
+    action: run
+    input:
+      command: |
+        RESULT=$(curl -o /dev/null -s -w '{"status_code":%{http_code},"time_total":%{time_total},"time_connect":%{time_connect},"time_ttfb":%{time_starttransfer}}' --max-time 30 -L '${{ input.url }}')
+        echo "$RESULT"
+    on_error: abort
+
+  - name: check-ssl
+    connector: shell
+    action: run
+    input:
+      command: |
+        HOST=$(echo '${{ input.url }}' | sed 's|https\?://||' | cut -d/ -f1 | cut -d: -f1)
+        EXPIRY=$(echo | openssl s_client -servername "$HOST" -connect "$HOST:443" 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | sed 's/notAfter=//')
+        if [ -n "$EXPIRY" ]; then
+          EXPIRY_EPOCH=$(date -d "$EXPIRY" +%s 2>/dev/null || echo "0")
+          NOW_EPOCH=$(date +%s)
+          DAYS_LEFT=$(( (EXPIRY_EPOCH - NOW_EPOCH) / 86400 ))
+          echo "{\"ssl_expiry_date\":\"$EXPIRY\",\"ssl_days_left\":$DAYS_LEFT}"
+        else
+          echo "{\"ssl_expiry_date\":\"n/a\",\"ssl_days_left\":-1}"
+        fi
+    on_error: continue
+
+  - name: evaluate-health
+    connector: shell
+    action: run
+    input:
+      command: |
+        EXPECTED="${{ input.expected_status }}"
+        EXPECTED="${EXPECTED:-200}"
+        MAX_TIME="${{ input.max_response_time }}"
+        MAX_TIME="${MAX_TIME:-5}"
+
+        STATUS=$(echo '${{ steps.check-endpoint.output.stdout }}' | jq -r '.status_code')
+        TIME=$(echo '${{ steps.check-endpoint.output.stdout }}' | jq -r '.time_total')
+        SSL_DAYS=$(echo '${{ steps.check-ssl.output.stdout }}' | jq -r '.ssl_days_left // -1')
+
+        HEALTHY="true"
+        ISSUES=""
+
+        if [ "$STATUS" != "$EXPECTED" ]; then
+          HEALTHY="false"
+          ISSUES="${ISSUES}status=$STATUS (expected $EXPECTED); "
+        fi
+
+        TIME_INT=$(echo "$TIME" | cut -d. -f1)
+        if [ "$TIME_INT" -ge "$MAX_TIME" ] 2>/dev/null; then
+          HEALTHY="false"
+          ISSUES="${ISSUES}slow=${TIME}s (max ${MAX_TIME}s); "
+        fi
+
+        if [ "$SSL_DAYS" -ge 0 ] && [ "$SSL_DAYS" -le 14 ]; then
+          HEALTHY="false"
+          ISSUES="${ISSUES}ssl_expiring_in=${SSL_DAYS}d; "
+        fi
+
+        echo "{\"healthy\":$HEALTHY,\"status_code\":$STATUS,\"response_time\":\"${TIME}s\",\"ssl_days_left\":$SSL_DAYS,\"issues\":\"$ISSUES\"}"
+    on_error: abort
+
+  - name: log-result
+    connector: log
+    action: print
+    input:
+      message: "Monitor ${{ input.url }}: ${{ steps.evaluate-health.output.stdout }}"
+    on_error: skip
+
+  - name: send-alert
+    connector: http
+    action: request
+    input:
+      url: "${{ input.alert_url }}"
+      method: POST
+      body:
+        url: "${{ input.url }}"
+        health: "${{ steps.evaluate-health.output.stdout }}"
+        check_time: "${{ steps.check-endpoint.output.stdout }}"
+        ssl: "${{ steps.check-ssl.output.stdout }}"
+    on_error: skip

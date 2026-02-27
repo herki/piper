@@ -1,0 +1,98 @@
+name: notify-multi
+version: "1.0"
+description: "Send a notification to multiple channels — Slack webhook, generic webhook, and email via mailgun/sendgrid API"
+
+input:
+  properties:
+    message:
+      type: string
+      description: "Notification message text"
+      required: true
+    title:
+      type: string
+      description: "Notification title/subject"
+      required: false
+    slack_webhook:
+      type: string
+      description: "Slack incoming webhook URL"
+      required: false
+    webhook_url:
+      type: string
+      description: "Generic webhook URL to POST to"
+      required: false
+    email_api_url:
+      type: string
+      description: "Email API endpoint (e.g. Sendgrid/Mailgun API URL)"
+      required: false
+    email_api_key:
+      type: string
+      description: "Email API key"
+      required: false
+    email_to:
+      type: string
+      description: "Recipient email address"
+      required: false
+    email_from:
+      type: string
+      description: "Sender email address"
+      required: false
+
+trigger:
+  type: webhook
+  path: /skills/notify
+
+steps:
+  - name: send-slack
+    connector: http
+    action: request
+    input:
+      url: "${{ input.slack_webhook }}"
+      method: POST
+      body:
+        text: "${{ input.title }}: ${{ input.message }}"
+    on_error: skip
+
+  - name: send-webhook
+    connector: http
+    action: request
+    input:
+      url: "${{ input.webhook_url }}"
+      method: POST
+      body:
+        title: "${{ input.title }}"
+        message: "${{ input.message }}"
+        timestamp: "${{ env.HOSTNAME }}"
+    on_error: skip
+
+  - name: send-email
+    connector: http
+    action: request
+    input:
+      url: "${{ input.email_api_url }}"
+      method: POST
+      headers:
+        Authorization: "Bearer ${{ input.email_api_key }}"
+      body:
+        from: "${{ input.email_from }}"
+        to: "${{ input.email_to }}"
+        subject: "${{ input.title }}"
+        text: "${{ input.message }}"
+    on_error: skip
+
+  - name: summarize
+    connector: shell
+    action: run
+    input:
+      command: |
+        SLACK="${{ steps.send-slack.status }}"
+        WEBHOOK="${{ steps.send-webhook.status }}"
+        EMAIL="${{ steps.send-email.status }}"
+        echo "{\"slack\":\"$SLACK\",\"webhook\":\"$WEBHOOK\",\"email\":\"$EMAIL\"}"
+    on_error: continue
+
+  - name: log-result
+    connector: log
+    action: print
+    input:
+      message: "Notifications sent: ${{ steps.summarize.output.stdout }}"
+    on_error: skip

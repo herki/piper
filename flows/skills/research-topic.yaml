@@ -1,0 +1,65 @@
+name: research-topic
+version: "1.0"
+description: "Search the web for a topic and collect results from multiple sources — AI agent research tool"
+
+input:
+  properties:
+    query:
+      type: string
+      description: "Search query"
+      required: true
+    num_results:
+      type: string
+      description: "Number of results to fetch content from (default: 3)"
+      required: false
+
+output:
+  properties:
+    results:
+      type: array
+    summary:
+      type: string
+
+trigger:
+  type: webhook
+  path: /skills/research
+
+steps:
+  - name: search
+    connector: shell
+    action: run
+    input:
+      command: |
+        NUM="${{ input.num_results }}"
+        NUM="${NUM:-3}"
+        curl -s "https://html.duckduckgo.com/html/?q=$(echo '${{ input.query }}' | sed 's/ /+/g')" \
+          -H 'User-Agent: Mozilla/5.0' | \
+          grep -oP 'href="//duckduckgo.com/l/\?uddg=\K[^&"]+' | \
+          head -n "$NUM" | \
+          while read -r url; do
+            python3 -c "import urllib.parse; print(urllib.parse.unquote('$url'))" 2>/dev/null || echo "$url"
+          done | \
+          jq -R -s -c 'split("\n") | map(select(length > 0))'
+    on_error: abort
+
+  - name: fetch-content
+    connector: shell
+    action: run
+    input:
+      command: |
+        echo '${{ steps.search.output.stdout }}' | jq -r '.[]' | while read -r url; do
+          TITLE=$(curl -sL --max-time 10 "$url" | grep -oP '<title[^>]*>\K[^<]+' | head -1)
+          TEXT=$(curl -sL --max-time 10 "$url" | \
+            sed 's/<script[^>]*>.*<\/script>//g; s/<style[^>]*>.*<\/style>//g' | \
+            sed 's/<[^>]*>//g; /^[[:space:]]*$/d; s/^[[:space:]]*//' | \
+            head -30 | tr '\n' ' ' | head -c 500)
+          echo "{\"url\":\"$url\",\"title\":\"$(echo "$TITLE" | sed 's/"/\\"/g')\",\"excerpt\":\"$(echo "$TEXT" | sed 's/"/\\"/g')\"}"
+        done | jq -s -c '.'
+    on_error: abort
+
+  - name: log-result
+    connector: log
+    action: print
+    input:
+      message: "Research for \"${{ input.query }}\": found results from ${{ steps.search.output.stdout }}"
+    on_error: skip
