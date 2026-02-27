@@ -1,0 +1,23 @@
+name: parent-onboard
+version: "1.0"
+description: "Parent flow that composes child flows for onboarding"
+
+input:
+  properties:
+    client:
+      type: string
+      description: "Client name"
+      required: true
+
+steps:
+  - name: setup
+    connector: flow
+    flow: child-setup
+    input:
+      project: "client-${{ input.client | slugify }}"
+
+  - name: notify
+    connector: log
+    action: print
+    input:
+      message: "Onboarding complete for ${{ input.client }}"

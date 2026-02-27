@@ -47,9 +47,11 @@ func ValidateFlow(flow *types.FlowDef, registry *plugin.Registry) error {
 		}
 		stepNames[step.Name] = i
 
-		if step.Connector == "" {
+		if step.Connector == "" && len(step.Parallel) == 0 {
 			ve.Add(fmt.Sprintf("step %q: 'connector' is required", step.Name))
-		} else if !registry.Has(step.Connector) {
+		} else if step.Connector == "flow" {
+			// Flow connector is handled by the engine, not the registry.
+		} else if step.Connector != "" && !registry.Has(step.Connector) {
 			ve.Add(fmt.Sprintf("step %q: connector %q not found in registry", step.Name, step.Connector))
 		} else {
 			conn, _ := registry.Get(step.Connector)
@@ -68,10 +70,38 @@ func ValidateFlow(flow *types.FlowDef, registry *plugin.Registry) error {
 		}
 
 		switch step.OnError {
-		case "", "abort", "continue", "skip":
+		case "", "abort", "continue", "skip", "retry":
 			// valid
 		default:
-			ve.Add(fmt.Sprintf("step %q: invalid on_error value %q (must be abort, continue, or skip)", step.Name, step.OnError))
+			ve.Add(fmt.Sprintf("step %q: invalid on_error value %q (must be abort, continue, skip, or retry)", step.Name, step.OnError))
+		}
+
+		if step.OnError == "retry" && step.Retry == nil {
+			ve.Add(fmt.Sprintf("step %q: on_error is 'retry' but no retry config provided", step.Name))
+		}
+
+		// Validate parallel sub-steps.
+		for j, ps := range step.Parallel {
+			if ps.Name == "" {
+				ve.Add(fmt.Sprintf("step %d parallel[%d]: 'name' is required", i+1, j))
+				continue
+			}
+			if prev, exists := stepNames[ps.Name]; exists {
+				ve.Add(fmt.Sprintf("step %d parallel[%d]: duplicate step name %q (first at step %d)", i+1, j, ps.Name, prev+1))
+			}
+			stepNames[ps.Name] = i
+			if ps.Connector == "" && len(ps.Parallel) == 0 {
+				ve.Add(fmt.Sprintf("parallel step %q: 'connector' is required", ps.Name))
+			}
+		}
+
+		// Validate flow composition.
+		if step.Connector == "flow" && step.Flow == "" {
+			if step.Input == nil {
+				ve.Add(fmt.Sprintf("step %q: flow connector requires 'flow' field or input.flow", step.Name))
+			} else if _, ok := step.Input["flow"]; !ok {
+				ve.Add(fmt.Sprintf("step %q: flow connector requires 'flow' field or input.flow", step.Name))
+			}
 		}
 
 		// Validate step references point to previous steps.

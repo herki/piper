@@ -10,11 +10,13 @@ import (
 
 	"piper/internal/engine"
 	"piper/internal/loader"
+	"piper/internal/types"
 )
 
 var (
-	inputJSON string
-	dryRun    bool
+	inputJSON   string
+	dryRun      bool
+	secretsFile string
 )
 
 var runCmd = &cobra.Command{
@@ -27,6 +29,7 @@ var runCmd = &cobra.Command{
 func init() {
 	runCmd.Flags().StringVar(&inputJSON, "input", "{}", "JSON input for the flow")
 	runCmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would execute without running")
+	runCmd.Flags().StringVar(&secretsFile, "secrets-file", "", "path to .env-style secrets file")
 	rootCmd.AddCommand(runCmd)
 }
 
@@ -51,6 +54,15 @@ func runFlow(cmd *cobra.Command, args []string) error {
 	registry := defaultRegistry()
 	eng := engine.NewEngine(registry)
 
+	// Enable flow composition.
+	eng.FlowLoader = func(name string) (*types.FlowDef, error) {
+		f, ok := flows[name]
+		if !ok {
+			return nil, fmt.Errorf("flow %q not found", name)
+		}
+		return f, nil
+	}
+
 	if err := engine.ValidateFlow(flow, registry); err != nil {
 		return err
 	}
@@ -59,7 +71,20 @@ func runFlow(cmd *cobra.Command, args []string) error {
 	if dryRun {
 		result, err = eng.DryRun(flow, input)
 	} else {
-		result, err = eng.Run(context.Background(), flow, input)
+		ctx := context.Background()
+
+		// Load secrets if provided.
+		var secrets map[string]string
+		if secretsFile != "" {
+			secrets, err = engine.LoadSecrets(secretsFile)
+			if err != nil {
+				return fmt.Errorf("loading secrets: %w", err)
+			}
+		}
+
+		flowResult, runErr := eng.RunWithSecrets(ctx, flow, input, secrets)
+		result = flowResult
+		err = runErr
 	}
 	if err != nil {
 		return err

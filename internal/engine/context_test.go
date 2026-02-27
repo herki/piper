@@ -51,7 +51,6 @@ func TestResolveStepOutputVariables(t *testing.T) {
 		t.Errorf("got %v, want https://github.com/test", val)
 	}
 
-	// Test integer preservation when expression is the whole string.
 	val2, err := ctx.resolveString("${{ steps.step1.output.count }}")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -87,13 +86,34 @@ func TestResolvePipeFunctions(t *testing.T) {
 
 func TestResolveEnvVariables(t *testing.T) {
 	ctx := NewStepContext(map[string]any{})
-	// HOME should always be set.
 	val, err := ctx.resolveString("${{ env.HOME }}")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if val == "" {
 		t.Error("expected non-empty HOME env var")
+	}
+}
+
+func TestResolveSecrets(t *testing.T) {
+	ctx := NewStepContext(map[string]any{})
+	ctx.Secrets["API_KEY"] = "secret123"
+
+	val, err := ctx.resolveString("${{ secret.API_KEY }}")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if val != "secret123" {
+		t.Errorf("got %v, want secret123", val)
+	}
+
+	// Missing secret returns empty string.
+	val2, err := ctx.resolveString("${{ secret.MISSING }}")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if val2 != "" {
+		t.Errorf("got %v, want empty string", val2)
 	}
 }
 
@@ -138,6 +158,88 @@ func TestSlugify(t *testing.T) {
 		result := slugify(tt.input)
 		if result != tt.expected {
 			t.Errorf("slugify(%q) = %q, want %q", tt.input, result, tt.expected)
+		}
+	}
+}
+
+func TestEvaluateConditionEquals(t *testing.T) {
+	ctx := NewStepContext(map[string]any{"status": "active"})
+	ctx.AddStepResult("step1", &types.StepResult{Status: "success"})
+
+	tests := []struct {
+		when     string
+		expected bool
+	}{
+		{`${{ steps.step1.status == "success" }}`, true},
+		{`${{ steps.step1.status == "failed" }}`, false},
+		{`${{ steps.step1.status != "failed" }}`, true},
+		{`${{ input.status == "active" }}`, true},
+		{`${{ input.status == "inactive" }}`, false},
+	}
+
+	for _, tt := range tests {
+		result, err := ctx.EvaluateCondition(tt.when)
+		if err != nil {
+			t.Errorf("EvaluateCondition(%q) error: %v", tt.when, err)
+			continue
+		}
+		if result != tt.expected {
+			t.Errorf("EvaluateCondition(%q) = %v, want %v", tt.when, result, tt.expected)
+		}
+	}
+}
+
+func TestEvaluateConditionTruthy(t *testing.T) {
+	ctx := NewStepContext(map[string]any{"flag": "true", "empty": ""})
+
+	tests := []struct {
+		when     string
+		expected bool
+	}{
+		{`${{ input.flag }}`, true},
+		{`${{ input.empty }}`, false},
+		{`${{ true }}`, true},
+		{`${{ false }}`, false},
+		{"", true}, // empty when = always run
+	}
+
+	for _, tt := range tests {
+		result, err := ctx.EvaluateCondition(tt.when)
+		if err != nil {
+			t.Errorf("EvaluateCondition(%q) error: %v", tt.when, err)
+			continue
+		}
+		if result != tt.expected {
+			t.Errorf("EvaluateCondition(%q) = %v, want %v", tt.when, result, tt.expected)
+		}
+	}
+}
+
+func TestEvaluateConditionNumeric(t *testing.T) {
+	ctx := NewStepContext(map[string]any{})
+	ctx.AddStepResult("api", &types.StepResult{
+		Status: "success",
+		Output: map[string]any{"status_code": 200},
+	})
+
+	tests := []struct {
+		when     string
+		expected bool
+	}{
+		{`${{ steps.api.output.status_code == "200" }}`, true},
+		{`${{ steps.api.output.status_code >= "200" }}`, true},
+		{`${{ steps.api.output.status_code < "300" }}`, true},
+		{`${{ steps.api.output.status_code > "300" }}`, false},
+	}
+
+	for _, tt := range tests {
+		result, err := ctx.EvaluateCondition(tt.when)
+		if err != nil {
+			t.Errorf("EvaluateCondition(%q) error: %v", tt.when, err)
+			continue
+		}
+		if result != tt.expected {
+			t.Errorf("EvaluateCondition(%q) = %v, want %v", tt.when, result, tt.expected)
 		}
 	}
 }

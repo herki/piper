@@ -14,9 +14,10 @@ var exprRegex = regexp.MustCompile(`\$\{\{\s*(.+?)\s*\}\}`)
 
 // StepContext holds the state available during flow execution for variable resolution.
 type StepContext struct {
-	Input map[string]any
-	Steps map[string]*types.StepResult
-	Env   map[string]string
+	Input   map[string]any
+	Steps   map[string]*types.StepResult
+	Env     map[string]string
+	Secrets map[string]string
 }
 
 // NewStepContext creates a StepContext from flow input.
@@ -28,9 +29,10 @@ func NewStepContext(input map[string]any) *StepContext {
 		}
 	}
 	return &StepContext{
-		Input: input,
-		Steps: make(map[string]*types.StepResult),
-		Env:   env,
+		Input:   input,
+		Steps:   make(map[string]*types.StepResult),
+		Env:     env,
+		Secrets: make(map[string]string),
 	}
 }
 
@@ -173,6 +175,16 @@ func (sc *StepContext) resolvePath(path string) (any, error) {
 		}
 		return val, nil
 
+	case "secret":
+		if len(segments) < 2 {
+			return nil, fmt.Errorf("incomplete secret reference: %q", path)
+		}
+		val, ok := sc.Secrets[segments[1]]
+		if !ok {
+			return "", nil
+		}
+		return val, nil
+
 	default:
 		return nil, fmt.Errorf("unknown variable root %q in %q", root, path)
 	}
@@ -208,6 +220,128 @@ func applyPipe(val any, fn string) (any, error) {
 	default:
 		return nil, fmt.Errorf("unknown pipe function %q", fn)
 	}
+}
+
+// conditionRegex matches comparison expressions like: value == "string" or value != "string"
+var conditionRegex = regexp.MustCompile(`^(.+?)\s*(==|!=|>=|<=|>|<)\s*(.+)$`)
+
+// EvaluateCondition evaluates a when expression and returns true if the step should run.
+// Supports: ${{ expr == "value" }}, ${{ expr != "value" }}, ${{ expr }}, boolean comparisons.
+func (sc *StepContext) EvaluateCondition(when string) (bool, error) {
+	if when == "" {
+		return true, nil
+	}
+
+	// Strip ${{ }} wrapper if present.
+	w := strings.TrimSpace(when)
+	if strings.HasPrefix(w, "${{") && strings.HasSuffix(w, "}}") {
+		w = strings.TrimSpace(w[3 : len(w)-2])
+	}
+
+	// Check for comparison operators.
+	if m := conditionRegex.FindStringSubmatch(w); m != nil {
+		leftExpr := strings.TrimSpace(m[1])
+		op := m[2]
+		rightExpr := strings.TrimSpace(m[3])
+
+		left, err := sc.resolveConditionValue(leftExpr)
+		if err != nil {
+			return false, fmt.Errorf("evaluating condition left side: %w", err)
+		}
+		right, err := sc.resolveConditionValue(rightExpr)
+		if err != nil {
+			return false, fmt.Errorf("evaluating condition right side: %w", err)
+		}
+
+		leftStr := fmt.Sprintf("%v", left)
+		rightStr := fmt.Sprintf("%v", right)
+
+		switch op {
+		case "==":
+			return leftStr == rightStr, nil
+		case "!=":
+			return leftStr != rightStr, nil
+		case ">", ">=", "<", "<=":
+			return compareNumeric(leftStr, rightStr, op), nil
+		}
+	}
+
+	// No operator — evaluate as truthy.
+	val, err := sc.resolveConditionValue(w)
+	if err != nil {
+		return false, err
+	}
+	return isTruthy(val), nil
+}
+
+func (sc *StepContext) resolveConditionValue(expr string) (any, error) {
+	// Quoted string literal.
+	if (strings.HasPrefix(expr, `"`) && strings.HasSuffix(expr, `"`)) ||
+		(strings.HasPrefix(expr, `'`) && strings.HasSuffix(expr, `'`)) {
+		return expr[1 : len(expr)-1], nil
+	}
+	// Boolean literals.
+	if expr == "true" {
+		return true, nil
+	}
+	if expr == "false" {
+		return false, nil
+	}
+	// Try as path reference.
+	return sc.resolvePath(expr)
+}
+
+func compareNumeric(a, b, op string) bool {
+	af, aErr := parseFloat(a)
+	bf, bErr := parseFloat(b)
+	if aErr != nil || bErr != nil {
+		// Fall back to string comparison.
+		switch op {
+		case ">":
+			return a > b
+		case ">=":
+			return a >= b
+		case "<":
+			return a < b
+		case "<=":
+			return a <= b
+		}
+		return false
+	}
+	switch op {
+	case ">":
+		return af > bf
+	case ">=":
+		return af >= bf
+	case "<":
+		return af < bf
+	case "<=":
+		return af <= bf
+	}
+	return false
+}
+
+func parseFloat(s string) (float64, error) {
+	var f float64
+	_, err := fmt.Sscanf(s, "%f", &f)
+	return f, err
+}
+
+func isTruthy(v any) bool {
+	if v == nil {
+		return false
+	}
+	switch val := v.(type) {
+	case bool:
+		return val
+	case string:
+		return val != "" && val != "false" && val != "0"
+	case int:
+		return val != 0
+	case float64:
+		return val != 0
+	}
+	return true
 }
 
 func slugify(s string) string {

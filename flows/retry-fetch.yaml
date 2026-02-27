@@ -1,0 +1,36 @@
+name: retry-fetch
+version: "1.0"
+description: "Fetch data with retry on failure and exponential backoff"
+
+input:
+  properties:
+    url:
+      type: string
+      description: "URL to fetch"
+      required: true
+
+steps:
+  - name: fetch-data
+    connector: http
+    action: request
+    input:
+      url: "${{ input.url }}"
+      method: GET
+    on_error: retry
+    retry:
+      max_retries: 3
+      backoff_seconds: 1
+
+  - name: report
+    connector: log
+    action: print
+    input:
+      message: "Fetch completed with status ${{ steps.fetch-data.output.status_code }}"
+    when: ${{ steps.fetch-data.status == "success" }}
+
+  - name: report-failure
+    connector: log
+    action: print
+    input:
+      message: "Fetch failed after retries"
+    when: ${{ steps.fetch-data.status == "failed" }}

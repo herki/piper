@@ -18,6 +18,7 @@ var rootCmd = &cobra.Command{
 func init() {
 	rootCmd.PersistentFlags().StringVar(&flowsDir, "flows-dir", "./flows", "directory containing flow YAML files")
 	rootCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", "table", "output format: table or json")
+	rootCmd.PersistentFlags().StringVar(&pluginsDir, "plugins-dir", "./plugins", "directory containing external plugin executables")
 }
 
 func Execute() error {

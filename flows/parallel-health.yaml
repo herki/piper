@@ -1,0 +1,41 @@
+name: parallel-health
+version: "1.0"
+description: "Check multiple services in parallel, then summarize"
+
+steps:
+  - name: check-services
+    parallel:
+      - name: check-api
+        connector: shell
+        action: run
+        input:
+          command: "echo 'API: healthy (12ms)'"
+
+      - name: check-db
+        connector: shell
+        action: run
+        input:
+          command: "echo 'Database: healthy (3ms)'"
+
+      - name: check-cache
+        connector: shell
+        action: run
+        input:
+          command: "echo 'Cache: healthy (1ms)'"
+
+      - name: check-queue
+        connector: shell
+        action: run
+        input:
+          command: "echo 'Queue: healthy (5ms)'"
+
+  - name: summary
+    connector: log
+    action: print
+    input:
+      message: |
+        Health Check Summary:
+        - API: ${{ steps.check-api.output.stdout }}
+        - DB: ${{ steps.check-db.output.stdout }}
+        - Cache: ${{ steps.check-cache.output.stdout }}
+        - Queue: ${{ steps.check-queue.output.stdout }}

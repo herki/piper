@@ -32,6 +32,12 @@ type TriggerDef struct {
 	Path string `yaml:"path" json:"path"`
 }
 
+// RetryConfig defines retry behavior for a step.
+type RetryConfig struct {
+	MaxRetries     int     `yaml:"max_retries" json:"max_retries"`
+	BackoffSeconds float64 `yaml:"backoff_seconds" json:"backoff_seconds"`
+}
+
 // StepDef represents a single step in a flow.
 type StepDef struct {
 	Name      string         `yaml:"name" json:"name"`
@@ -39,6 +45,12 @@ type StepDef struct {
 	Action    string         `yaml:"action" json:"action"`
 	Input     map[string]any `yaml:"input" json:"input"`
 	OnError   string         `yaml:"on_error" json:"on_error"`
+	When      string         `yaml:"when,omitempty" json:"when,omitempty"`
+	Retry     *RetryConfig   `yaml:"retry,omitempty" json:"retry,omitempty"`
+	Parallel  []StepDef      `yaml:"parallel,omitempty" json:"parallel,omitempty"`
+
+	// Flow connector fields — used when connector is "flow".
+	Flow string `yaml:"flow,omitempty" json:"flow,omitempty"`
 }
 
 // StepResult holds the result of executing a single step.
@@ -50,6 +62,7 @@ type StepResult struct {
 	Output     map[string]any `json:"output,omitempty"`
 	Error      string         `json:"error,omitempty"`
 	DurationMs int64          `json:"duration_ms"`
+	Retries    int            `json:"retries,omitempty"`
 }
 
 // FlowResult holds the result of an entire flow execution.

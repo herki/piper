@@ -1,0 +1,48 @@
+name: conditional-deploy
+version: "1.0"
+description: "Deploy with conditional steps based on environment and test results"
+
+input:
+  properties:
+    environment:
+      type: string
+      description: "Target environment: staging or production"
+      required: true
+    skip_tests:
+      type: string
+      description: "Set to 'true' to skip tests"
+
+steps:
+  - name: run-tests
+    connector: shell
+    action: run
+    input:
+      command: "echo 'Running tests...' && echo 'All 42 tests passed'"
+    when: ${{ input.skip_tests != "true" }}
+    on_error: abort
+
+  - name: build
+    connector: shell
+    action: run
+    input:
+      command: "echo 'Building application for ${{ input.environment }}...'"
+
+  - name: deploy-staging
+    connector: shell
+    action: run
+    input:
+      command: "echo 'Deploying to staging server...'"
+    when: ${{ input.environment == "staging" }}
+
+  - name: deploy-production
+    connector: shell
+    action: run
+    input:
+      command: "echo 'Deploying to production server...'"
+    when: ${{ input.environment == "production" }}
+
+  - name: notify
+    connector: log
+    action: print
+    input:
+      message: "Deployment to ${{ input.environment }} complete"

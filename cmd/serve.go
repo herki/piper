@@ -8,6 +8,7 @@ import (
 	"piper/internal/engine"
 	"piper/internal/loader"
 	"piper/internal/server"
+	"piper/internal/types"
 )
 
 var servePort int
@@ -32,6 +33,13 @@ func serveWebhook(cmd *cobra.Command, args []string) error {
 
 	registry := defaultRegistry()
 	eng := engine.NewEngine(registry)
+	eng.FlowLoader = func(name string) (*types.FlowDef, error) {
+		f, ok := flows[name]
+		if !ok {
+			return nil, fmt.Errorf("flow %q not found", name)
+		}
+		return f, nil
+	}
 
 	srv := server.NewWebhookServer(eng, flows)
 	addr := fmt.Sprintf(":%d", servePort)

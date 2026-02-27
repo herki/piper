@@ -1,0 +1,23 @@
+name: child-setup
+version: "1.0"
+description: "Reusable setup flow called by parent flows"
+
+input:
+  properties:
+    project:
+      type: string
+      description: "Project name"
+      required: true
+
+steps:
+  - name: create-dir
+    connector: shell
+    action: run
+    input:
+      command: "echo 'Created directory for ${{ input.project }}'"
+
+  - name: init-config
+    connector: shell
+    action: run
+    input:
+      command: "echo 'Initialized config for ${{ input.project }}'"
