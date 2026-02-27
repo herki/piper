@@ -1,0 +1,77 @@
+name: playwright-screenshot
+version: "1.0"
+description: "Take a screenshot of a webpage using Playwright CLI"
+
+input:
+  properties:
+    url:
+      type: string
+      description: "URL to screenshot"
+      required: true
+    output_dir:
+      type: string
+      description: "Directory to save screenshot (default: /tmp)"
+      required: false
+    full_page:
+      type: string
+      description: "Capture full page scroll (true/false, default: true)"
+      required: false
+    viewport:
+      type: string
+      description: "Viewport size, e.g. 1280,720 (default: 1280,720)"
+      required: false
+
+trigger:
+  type: webhook
+  path: /screenshot
+
+steps:
+  - name: ensure-playwright
+    connector: shell
+    action: run
+    input:
+      command: "npx playwright --version 2>/dev/null || (npm install -g playwright && npx playwright install chromium)"
+    on_error: abort
+
+  - name: prepare-output
+    connector: shell
+    action: run
+    input:
+      command: |
+        DIR="${{ input.output_dir }}"
+        DIR="${DIR:-/tmp}"
+        SLUG=$(echo "${{ input.url }}" | sed 's|https\?://||;s|[^a-zA-Z0-9]|-|g' | head -c 80)
+        FILENAME="${DIR}/screenshot-${SLUG}-$(date +%Y%m%d-%H%M%S).png"
+        mkdir -p "$DIR"
+        echo "$FILENAME"
+    on_error: abort
+
+  - name: take-screenshot
+    connector: shell
+    action: run
+    input:
+      command: |
+        VIEWPORT="${{ input.viewport }}"
+        VIEWPORT="${VIEWPORT:-1280,720}"
+        FULL_PAGE="${{ input.full_page }}"
+        FULL_PAGE="${FULL_PAGE:-true}"
+        ARGS="--viewport-size=$VIEWPORT"
+        if [ "$FULL_PAGE" = "true" ]; then
+          ARGS="$ARGS --full-page"
+        fi
+        npx playwright screenshot $ARGS "${{ input.url }}" "${{ steps.prepare-output.output.stdout }}"
+    on_error: abort
+
+  - name: file-info
+    connector: shell
+    action: run
+    input:
+      command: "ls -lh ${{ steps.prepare-output.output.stdout }} && file ${{ steps.prepare-output.output.stdout }}"
+    on_error: continue
+
+  - name: log-result
+    connector: log
+    action: print
+    input:
+      message: "Screenshot saved: ${{ steps.prepare-output.output.stdout }} (${{ steps.file-info.output.stdout }})"
+    on_error: skip

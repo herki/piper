@@ -1,0 +1,92 @@
+name: playwright-visual-diff
+version: "1.0"
+description: "Take before/after screenshots of a URL and compare them with ImageMagick"
+
+input:
+  properties:
+    url:
+      type: string
+      description: "URL to compare"
+      required: true
+    baseline_path:
+      type: string
+      description: "Path to baseline screenshot (if missing, current screenshot becomes the baseline)"
+      required: true
+    output_dir:
+      type: string
+      description: "Directory to save diff image (default: /tmp)"
+      required: false
+    threshold:
+      type: string
+      description: "Pixel difference threshold percentage to flag as changed (default: 1)"
+      required: false
+
+trigger:
+  type: webhook
+  path: /visual-diff
+
+steps:
+  - name: ensure-tools
+    connector: shell
+    action: run
+    input:
+      command: "npx playwright --version && compare --version 2>/dev/null | head -1 || echo 'ImageMagick not found — install with: apt install imagemagick'"
+    on_error: abort
+
+  - name: take-current
+    connector: shell
+    action: run
+    input:
+      command: |
+        DIR="${{ input.output_dir }}"
+        DIR="${DIR:-/tmp}"
+        CURRENT="${DIR}/visual-diff-current.png"
+        npx playwright screenshot --viewport-size=1280,720 --full-page "${{ input.url }}" "$CURRENT" >/dev/null 2>&1
+        echo "$CURRENT"
+    on_error: abort
+
+  - name: check-baseline
+    connector: shell
+    action: run
+    input:
+      command: "[ -f '${{ input.baseline_path }}' ] && echo 'exists' || echo 'missing'"
+    on_error: continue
+
+  - name: create-or-compare
+    connector: shell
+    action: run
+    input:
+      command: |
+        DIR="${{ input.output_dir }}"
+        DIR="${DIR:-/tmp}"
+        CURRENT="${{ steps.take-current.output.stdout }}"
+        BASELINE="${{ input.baseline_path }}"
+        THRESHOLD="${{ input.threshold }}"
+        THRESHOLD="${THRESHOLD:-1}"
+
+        if [ "${{ steps.check-baseline.output.stdout }}" = "missing" ]; then
+          cp "$CURRENT" "$BASELINE"
+          echo '{"status":"baseline_created","diff_percent":0,"baseline":"'"$BASELINE"'"}'
+        else
+          DIFF_IMG="${DIR}/visual-diff-result.png"
+          RESULT=$(compare -metric AE "$BASELINE" "$CURRENT" "$DIFF_IMG" 2>&1 || true)
+          TOTAL=$(identify -format "%w*%h\n" "$BASELINE" | bc 2>/dev/null || echo "1")
+          if [ "$TOTAL" -gt 0 ] 2>/dev/null; then
+            PCT=$(echo "scale=4; $RESULT * 100 / $TOTAL" | bc 2>/dev/null || echo "0")
+          else
+            PCT="0"
+          fi
+          CHANGED="false"
+          if [ "$(echo "$PCT > $THRESHOLD" | bc 2>/dev/null)" = "1" ]; then
+            CHANGED="true"
+          fi
+          echo "{\"status\":\"compared\",\"diff_pixels\":$RESULT,\"diff_percent\":$PCT,\"changed\":$CHANGED,\"diff_image\":\"$DIFF_IMG\"}"
+        fi
+    on_error: abort
+
+  - name: log-result
+    connector: log
+    action: print
+    input:
+      message: "Visual diff for ${{ input.url }}: ${{ steps.create-or-compare.output.stdout }}"
+    on_error: skip

@@ -125,7 +125,12 @@ func (sc *StepContext) resolvePath(path string) (any, error) {
 		if len(segments) < 2 {
 			return sc.Input, nil
 		}
-		return lookupNested(sc.Input, segments[1])
+		val, err := lookupNested(sc.Input, segments[1])
+		if err != nil {
+			// Missing input fields resolve to empty string (supports optional fields).
+			return "", nil
+		}
+		return val, nil
 
 	case "steps":
 		if len(segments) < 2 {

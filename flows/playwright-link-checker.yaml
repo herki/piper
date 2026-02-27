@@ -1,0 +1,73 @@
+name: playwright-link-checker
+version: "1.0"
+description: "Crawl a page and check all links for broken URLs"
+
+input:
+  properties:
+    url:
+      type: string
+      description: "URL to check links on"
+      required: true
+    callback_url:
+      type: string
+      description: "URL to POST results to (optional)"
+      required: false
+
+trigger:
+  type: webhook
+  path: /check-links
+
+steps:
+  - name: extract-links
+    connector: shell
+    action: run
+    input:
+      command: "curl -sL '${{ input.url }}' | grep -oP 'href=\"(https?://[^\"]+)\"' | sed 's/href=\"//;s/\"$//' | sort -u | head -50 | jq -R -s -c 'split(\"\\n\") | map(select(length > 0))'"
+    on_error: abort
+
+  - name: check-links
+    connector: shell
+    action: run
+    input:
+      command: |
+        echo '${{ steps.extract-links.output.stdout }}' | jq -r '.[]' | while read -r url; do
+          CODE=$(curl -o /dev/null -s -w '%{http_code}' --max-time 10 -L "$url" 2>/dev/null || echo "000")
+          if [ "$CODE" -ge 400 ] || [ "$CODE" = "000" ]; then
+            OK="false"
+          else
+            OK="true"
+          fi
+          echo "{\"url\":\"$url\",\"status\":$CODE,\"ok\":$OK}"
+        done | jq -s -c '.'
+    on_error: abort
+
+  - name: summarize
+    connector: shell
+    action: run
+    input:
+      command: |
+        echo '${{ steps.check-links.output.stdout }}' | jq -c '{
+          total: length,
+          ok: [.[] | select(.ok == true)] | length,
+          broken: [.[] | select(.ok == false)] | length,
+          broken_urls: [.[] | select(.ok == false)]
+        }'
+    on_error: continue
+
+  - name: log-result
+    connector: log
+    action: print
+    input:
+      message: "Link check for ${{ input.url }}: ${{ steps.summarize.output.stdout }}"
+    on_error: skip
+
+  - name: send-report
+    connector: http
+    action: request
+    input:
+      url: "${{ input.callback_url }}"
+      method: POST
+      body:
+        source_url: "${{ input.url }}"
+        results: "${{ steps.summarize.output.stdout }}"
+    on_error: skip

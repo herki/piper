@@ -1,0 +1,64 @@
+name: playwright-pdf
+version: "1.0"
+description: "Generate a PDF from a webpage using Playwright CLI"
+
+input:
+  properties:
+    url:
+      type: string
+      description: "URL to convert to PDF"
+      required: true
+    output_dir:
+      type: string
+      description: "Directory to save PDF (default: /tmp)"
+      required: false
+    format:
+      type: string
+      description: "Page format: Letter, A4, A3, Tabloid (default: A4)"
+      required: false
+
+trigger:
+  type: webhook
+  path: /pdf
+
+steps:
+  - name: ensure-playwright
+    connector: shell
+    action: run
+    input:
+      command: "npx playwright --version 2>/dev/null || (npm install -g playwright && npx playwright install chromium)"
+    on_error: abort
+
+  - name: prepare-output
+    connector: shell
+    action: run
+    input:
+      command: |
+        DIR="${{ input.output_dir }}"
+        DIR="${DIR:-/tmp}"
+        SLUG=$(echo "${{ input.url }}" | sed 's|https\?://||;s|[^a-zA-Z0-9]|-|g' | head -c 80)
+        FILENAME="${DIR}/page-${SLUG}-$(date +%Y%m%d-%H%M%S).pdf"
+        mkdir -p "$DIR"
+        echo "$FILENAME"
+    on_error: abort
+
+  - name: generate-pdf
+    connector: shell
+    action: run
+    input:
+      command: "npx playwright pdf '${{ input.url }}' '${{ steps.prepare-output.output.stdout }}'"
+    on_error: abort
+
+  - name: file-info
+    connector: shell
+    action: run
+    input:
+      command: "ls -lh '${{ steps.prepare-output.output.stdout }}' | awk '{print $5}'"
+    on_error: continue
+
+  - name: log-result
+    connector: log
+    action: print
+    input:
+      message: "PDF generated: ${{ steps.prepare-output.output.stdout }} (${{ steps.file-info.output.stdout }})"
+    on_error: skip
