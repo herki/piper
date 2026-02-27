@@ -8,25 +8,105 @@ Piper lets AI agents orchestrate multi-step workflows without knowing each servi
 
 - [README](https://github.com/herki/piper/blob/master/README.md): Full documentation, install guide, YAML format, connector reference
 - [Example Flows](https://github.com/herki/piper/tree/master/flows): Working flow definitions for common tasks
+- [Releases](https://github.com/herki/piper/releases): Prebuilt binaries for linux/darwin/windows (amd64/arm64)
 
 ## CLI Usage
 
 Run a flow: `flow run <name> --input '{"key": "value"}'`
+Run with secrets: `flow run <name> --input '{}' --secrets-file .env`
 Dry run (no execution): `flow run <name> --input '{}' --dry-run`
 List flows: `flow list [--output json]`
 Describe a flow (see schema): `flow describe <name> [--output json]`
 Validate a flow file: `flow validate <file.yaml>`
 Start webhook server: `flow serve --port 8080`
+Start MCP server: `flow mcp`
 
 All commands support `--output json` for machine-readable output. Use `flow describe <name> --output json` to discover a flow's input/output schema programmatically.
 
 ## YAML Flow Format
 
-Flows are YAML files with: name, input/output schema, trigger config, and sequential steps. Each step specifies a connector, action, and input map. Steps reference previous outputs via `${{ steps.<name>.output.<field> }}`.
+Flows are YAML files with: name, input/output schema, trigger config, and steps. Each step specifies a connector, action, and input map. Steps reference previous outputs via `${{ steps.<name>.output.<field> }}`.
 
-Variable expressions: `${{ input.field }}`, `${{ steps.name.output.field }}`, `${{ env.VAR }}`.
+Variable expressions: `${{ input.field }}`, `${{ steps.name.output.field }}`, `${{ steps.name.status }}`, `${{ env.VAR }}`, `${{ secret.KEY }}`.
 Pipe functions: `slugify`, `upper`, `lower`, `trim`.
-Error policies per step: `abort` (default), `continue`, `skip`.
+Error policies per step: `abort` (default), `continue`, `skip`, `retry`.
+
+## Conditional Steps
+
+Steps can be conditionally skipped using the `when:` field:
+
+```yaml
+- name: deploy-prod
+  connector: shell
+  action: run
+  input:
+    command: "deploy.sh"
+  when: ${{ input.environment == "production" }}
+```
+
+Supported operators: `==`, `!=`, `>`, `<`, `>=`, `<=`. Truthy evaluation for simple values. Reference step status: `${{ steps.name.status == "success" }}`.
+
+## Parallel Execution
+
+Run independent steps concurrently with `parallel:`:
+
+```yaml
+- name: check-all
+  parallel:
+    - name: check-api
+      connector: http
+      action: request
+      input: { url: "https://api.example.com/health", method: GET }
+    - name: check-db
+      connector: shell
+      action: run
+      input: { command: "pg_isready" }
+```
+
+Parallel steps run simultaneously. Their outputs are available to subsequent steps.
+
+## Retry with Backoff
+
+Automatically retry failed steps with exponential backoff:
+
+```yaml
+- name: call-api
+  connector: http
+  action: request
+  input: { url: "https://api.example.com", method: GET }
+  on_error: retry
+  retry:
+    max_retries: 3
+    backoff_seconds: 1
+```
+
+## Flow Composition
+
+Call one flow from another using `connector: flow`:
+
+```yaml
+- name: setup
+  connector: flow
+  flow: child-flow-name
+  input:
+    param: "${{ input.value }}"
+```
+
+Output includes: `flow_status`, `steps` count, `stdout`, `stderr`.
+
+## Secret Management
+
+Load secrets from `.env` files via `--secrets-file` and reference them with `${{ secret.KEY }}`:
+
+```yaml
+- name: call-api
+  connector: http
+  action: request
+  input:
+    url: "https://api.example.com"
+    headers:
+      Authorization: "Bearer ${{ secret.API_KEY }}"
+```
 
 ## Built-in Connectors
 
@@ -36,13 +116,35 @@ Error policies per step: `abort` (default), `continue`, `skip`.
 
 **log** — `action: print` — Print debug messages. Input: `message`. Output: `message`.
 
+**flow** — Flow composition. Input: child flow's input fields. Output: `flow_status`, `steps`, `stdout`, `stderr`.
+
+## External Plugins
+
+Extend Piper with custom connectors as standalone executables in `--plugins-dir`. Plugins support `--describe` for metadata discovery and communicate via JSON over stdin/stdout.
+
+## MCP Compatibility
+
+`flow mcp` starts a Model Context Protocol server over stdin/stdout. All flows are exposed as MCP tools with JSON Schema input definitions. AI agents can discover and call flows via the standard MCP protocol.
+
+Configure in your agent's MCP settings:
+```json
+{
+  "mcpServers": {
+    "piper": {
+      "command": "flow",
+      "args": ["mcp", "--flows-dir", "./flows"]
+    }
+  }
+}
+```
+
 ## Webhook Server
 
 `flow serve --port 8080` maps YAML trigger paths to HTTP POST endpoints. `GET /health` returns status. `GET /flows` returns all available flows with input schemas for agent discovery.
 
 ## Execution Output
 
-Every run returns JSON: `{ flow, status, started_at, completed_at, input, steps: [{ name, connector, action, status, output, duration_ms }] }`. Status is `success`, `failed`, or `partial`.
+Every run returns JSON: `{ flow, status, started_at, completed_at, input, steps: [{ name, connector, action, status, output, duration_ms, retries }] }`. Status is `success`, `failed`, `partial`, or `dry_run`.
 
 ## Available Example Flows
 
@@ -52,12 +154,27 @@ Every run returns JSON: `{ flow, status, started_at, completed_at, input, steps:
 - [git-deploy.yaml](https://github.com/herki/piper/blob/master/flows/git-deploy.yaml): Git pull, build, restart service
 - [github-issue-to-slack.yaml](https://github.com/herki/piper/blob/master/flows/github-issue-to-slack.yaml): Fetch GitHub issue, post to Slack
 - [data-pipeline.yaml](https://github.com/herki/piper/blob/master/flows/data-pipeline.yaml): Fetch JSON, transform with jq, forward to destination
+- [conditional-deploy.yaml](https://github.com/herki/piper/blob/master/flows/conditional-deploy.yaml): Deploy with conditional steps based on environment
+- [parallel-health.yaml](https://github.com/herki/piper/blob/master/flows/parallel-health.yaml): Check multiple services in parallel
+- [retry-fetch.yaml](https://github.com/herki/piper/blob/master/flows/retry-fetch.yaml): Fetch data with retry and exponential backoff
+- [parent-onboard.yaml](https://github.com/herki/piper/blob/master/flows/parent-onboard.yaml): Flow composition — parent calls child flow
 - [playwright-screenshot.yaml](https://github.com/herki/piper/blob/master/flows/playwright-screenshot.yaml): Take webpage screenshots
 - [playwright-pdf.yaml](https://github.com/herki/piper/blob/master/flows/playwright-pdf.yaml): Generate PDFs from webpages
 - [playwright-link-checker.yaml](https://github.com/herki/piper/blob/master/flows/playwright-link-checker.yaml): Crawl page, check for broken links
 - [playwright-visual-diff.yaml](https://github.com/herki/piper/blob/master/flows/playwright-visual-diff.yaml): Visual regression testing with screenshots
 
+**AI Agent Skills** (`flows/skills/`):
+- [summarize-url.yaml](https://github.com/herki/piper/blob/master/flows/skills/summarize-url.yaml): Fetch and summarize a web page
+- [research-topic.yaml](https://github.com/herki/piper/blob/master/flows/skills/research-topic.yaml): Multi-source research on a topic
+- [analyze-repo.yaml](https://github.com/herki/piper/blob/master/flows/skills/analyze-repo.yaml): Analyze a Git repository's structure
+- [json-transform.yaml](https://github.com/herki/piper/blob/master/flows/skills/json-transform.yaml): Transform JSON data with jq
+- [monitor-endpoint.yaml](https://github.com/herki/piper/blob/master/flows/skills/monitor-endpoint.yaml): Monitor an endpoint with repeated checks
+- [notify-multi.yaml](https://github.com/herki/piper/blob/master/flows/skills/notify-multi.yaml): Send notifications to multiple channels
+- [file-convert.yaml](https://github.com/herki/piper/blob/master/flows/skills/file-convert.yaml): Convert files between formats
+- [git-repo-stats.yaml](https://github.com/herki/piper/blob/master/flows/skills/git-repo-stats.yaml): Gather Git repository statistics
+
 ## Optional
 
 - [go.mod](https://github.com/herki/piper/blob/master/go.mod): Go module dependencies
 - [LICENSE](https://github.com/herki/piper/blob/master/LICENSE): MIT License
+- [AGENTS.md](https://github.com/herki/piper/blob/master/AGENTS.md): Coding agent guide for contributing
