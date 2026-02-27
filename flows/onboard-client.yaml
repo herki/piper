@@ -1,0 +1,61 @@
+name: onboard-client
+version: "1.0"
+description: "Onboard a new client — create meeting, repo, drive folder, notify team"
+
+input:
+  properties:
+    name:
+      type: string
+      description: "Client company name"
+      required: true
+    email:
+      type: string
+      description: "Client contact email"
+      required: true
+
+output:
+  properties:
+    calendar_event_id:
+      type: string
+    github_repo_url:
+      type: string
+    drive_folder_url:
+      type: string
+
+trigger:
+  type: webhook
+  path: /onboard-client
+
+steps:
+  - name: create-meeting
+    connector: http
+    action: request
+    input:
+      url: "https://httpbin.org/post"
+      method: POST
+      body:
+        title: "Kickoff: ${{ input.name }}"
+        attendees:
+          - "${{ input.email }}"
+        duration: "60m"
+        when: "next monday 10:00"
+    on_error: abort
+
+  - name: create-repo
+    connector: http
+    action: request
+    input:
+      url: "https://httpbin.org/post"
+      method: POST
+      body:
+        name: "client-${{ input.name | slugify }}"
+        template: "client-project-template"
+        private: true
+    on_error: continue
+
+  - name: notify-team
+    connector: log
+    action: print
+    input:
+      message: "New client *${{ input.name }}* onboarded! Meeting status: ${{ steps.create-meeting.output.status_code }}, Repo status: ${{ steps.create-repo.output.status_code }}"
+    on_error: skip

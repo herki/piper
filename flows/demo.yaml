@@ -1,0 +1,37 @@
+name: demo
+version: "1.0"
+description: "Demo flow — fetch a URL and log the result"
+
+input:
+  properties:
+    url:
+      type: string
+      description: "URL to fetch"
+      required: true
+
+output:
+  properties:
+    status_code:
+      type: integer
+    body:
+      type: any
+
+trigger:
+  type: webhook
+  path: /demo
+
+steps:
+  - name: fetch-url
+    connector: http
+    action: request
+    input:
+      url: "${{ input.url }}"
+      method: GET
+    on_error: abort
+
+  - name: log-result
+    connector: log
+    action: print
+    input:
+      message: "Fetched ${{ input.url }} — status: ${{ steps.fetch-url.output.status_code }}"
+    on_error: skip

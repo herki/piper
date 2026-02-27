@@ -1,0 +1,36 @@
+name: shell-demo
+version: "1.0"
+description: "Demo flow using shell commands"
+
+input:
+  properties:
+    greeting:
+      type: string
+      description: "A greeting message"
+      required: true
+
+trigger:
+  type: webhook
+  path: /shell-demo
+
+steps:
+  - name: echo-greeting
+    connector: shell
+    action: run
+    input:
+      command: "echo 'Hello from shell: ${{ input.greeting }}'"
+    on_error: abort
+
+  - name: get-date
+    connector: shell
+    action: run
+    input:
+      command: "date '+%Y-%m-%d %H:%M:%S'"
+    on_error: continue
+
+  - name: log-output
+    connector: log
+    action: print
+    input:
+      message: "Shell said: ${{ steps.echo-greeting.output.stdout }} at ${{ steps.get-date.output.stdout }}"
+    on_error: skip
