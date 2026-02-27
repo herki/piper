@@ -14,9 +14,10 @@ import (
 
 // ExternalConnector wraps an external executable that speaks JSON over stdin/stdout.
 // Protocol:
-//   Request:  {"action": "<action>", "input": {...}}
-//   Response: {"status": "success|failed", "output": {...}, "error": "..."}
-//   Metadata: run with --describe to get {"name": "...", "actions": [...]}
+//
+//	Request:  {"action": "<action>", "input": {...}}
+//	Response: {"status": "success|failed", "output": {...}, "error": "..."}
+//	Metadata: run with --describe to get {"name": "...", "actions": [...]}
 type ExternalConnector struct {
 	name    string
 	path    string
@@ -64,7 +65,7 @@ func LoadExternalPlugin(path string) (*ExternalConnector, error) {
 	}, nil
 }
 
-func (ec *ExternalConnector) Name() string       { return ec.name }
+func (ec *ExternalConnector) Name() string         { return ec.name }
 func (ec *ExternalConnector) Actions() []ActionDef { return ec.actions }
 
 func (ec *ExternalConnector) Execute(ctx context.Context, action string, input map[string]any) (*types.StepResult, error) {
