@@ -571,7 +571,9 @@ GoReleaser builds binaries for linux/darwin/windows (amd64/arm64) and publishes 
 
 ## Roadmap
 
-- Real service connectors (GitHub, Slack, Google Calendar) as separate plugin repos
+- Step timeout (`timeout: 30s` to kill hung steps)
+- Loop/foreach steps (iterate over lists)
+- Flow-level output mapping
+- Real service connectors (GitHub, Slack) as external plugins
 - Web UI for flow visualization and monitoring
-- NATS message bus for distributed execution
 - Flow versioning and rollback
